@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Offline AI-powered interview preparation chatbot using Llama and Ollama. Practice technical, behavioral, system design, and HR interviews locally." />
+  <title>InterviewAI — Offline Interview Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Highlight.js for code syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+
+<!-- ═══ Animated Background ═══════════════════════════════════════════════ -->
+<div class="bg-canvas" aria-hidden="true">
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
+</div>
+
+<!-- ═══ Sidebar ════════════════════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+  <!-- Logo -->
+  <div class="sidebar-logo">
+    <div class="logo-icon" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="url(#g1)" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 17l10 5 10-5" stroke="url(#g1)" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 12l10 5 10-5" stroke="url(#g1)" stroke-width="1.5" stroke-linejoin="round"/>
+        <defs>
+          <linearGradient id="g1" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#7c3aed"/>
+            <stop offset="1" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+    <div class="logo-text">
+      <span class="logo-primary">Interview</span><span class="logo-accent">AI</span>
+    </div>
+  </div>
+
+  <!-- Status Pill -->
+  <div class="status-pill" id="statusPill" title="Ollama connection status">
+    <span class="status-dot" id="statusDot"></span>
+    <span class="status-label" id="statusLabel">Checking...</span>
+  </div>
+
+  <!-- Category Selection -->
+  <nav class="categories" aria-label="Interview categories">
+    <p class="section-heading">Interview Type</p>
+    <button class="category-btn active" data-category="general" id="cat-general">
+      <span class="cat-icon">🎯</span>
+      <span class="cat-label">General</span>
+    </button>
+    <button class="category-btn" data-category="technical" id="cat-technical">
+      <span class="cat-icon">💻</span>
+      <span class="cat-label">Technical</span>
+    </button>
+    <button class="category-btn" data-category="behavioral" id="cat-behavioral">
+      <span class="cat-icon">🧠</span>
+      <span class="cat-label">Behavioral</span>
+    </button>
+    <button class="category-btn" data-category="system_design" id="cat-system_design">
+      <span class="cat-icon">🏗️</span>
+      <span class="cat-label">System Design</span>
+    </button>
+    <button class="category-btn" data-category="dsa" id="cat-dsa">
+      <span class="cat-icon">⚡</span>
+      <span class="cat-label">DSA</span>
+    </button>
+    <button class="category-btn" data-category="hr" id="cat-hr">
+      <span class="cat-icon">🤝</span>
+      <span class="cat-label">HR / Culture</span>
+    </button>
+  </nav>
+
+  <!-- Model Selector -->
+  <div class="model-section">
+    <p class="section-heading">Model</p>
+    <select class="model-select" id="modelSelect" aria-label="Select AI model">
+      <option value="llama3">llama3 (default)</option>
+    </select>
+  </div>
+
+  <!-- Quick Questions -->
+  <div class="quick-questions">
+    <p class="section-heading">Quick Start</p>
+    <div class="question-list" id="questionList"></div>
+  </div>
+
+  <!-- Actions -->
+  <div class="sidebar-footer">
+    <button class="action-btn" id="clearBtn" title="Clear conversation">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"></path>
+        <path d="M10 11v6M14 11v6"></path>
+      </svg>
+      Clear Chat
+    </button>
+    <button class="action-btn" id="exportBtn" title="Export conversation">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+      Export
+    </button>
+  </div>
+</aside>
+
+<!-- ═══ Mobile Top Bar ══════════════════════════════════════════════════════ -->
+<header class="mobile-header">
+  <button class="hamburger" id="hamburger" aria-label="Toggle sidebar">
+    <span></span><span></span><span></span>
+  </button>
+  <div class="mobile-logo">Interview<span class="logo-accent">AI</span></div>
+  <div class="mobile-status" id="mobileStatus"></div>
+</header>
+
+<!-- ═══ Main Chat Area ══════════════════════════════════════════════════════ -->
+<main class="main" id="main">
+
+  <!-- Chat Header -->
+  <header class="chat-header">
+    <div class="chat-header-info">
+      <h1 class="chat-title" id="chatTitle">General Interview</h1>
+      <p class="chat-subtitle" id="chatSubtitle">Your AI interview coach — offline &amp; private</p>
+    </div>
+    <div class="chat-header-actions">
+      <span class="message-count" id="messageCount">0 messages</span>
+    </div>
+  </header>
+
+  <!-- Messages -->
+  <section class="messages-container" id="messagesContainer" aria-live="polite" aria-label="Chat messages">
+    <!-- Welcome card -->
+    <div class="welcome-card" id="welcomeCard">
+      <div class="welcome-icon">🤖</div>
+      <h2 class="welcome-title">Ready to Ace Your Interview?</h2>
+      <p class="welcome-text">
+        Choose an interview category from the sidebar, then start a conversation.
+        Your AI coach will ask questions, evaluate your answers, and help you improve — all offline.
+      </p>
+      <div class="welcome-chips">
+        <button class="chip" onclick="startConversation('Tell me about yourself.')">Tell me about yourself</button>
+        <button class="chip" onclick="startConversation('Give me a technical interview question.')">Technical question</button>
+        <button class="chip" onclick="startConversation('Start a mock interview.')">Mock interview</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Typing Indicator -->
+  <div class="typing-indicator hidden" id="typingIndicator">
+    <div class="typing-avatar">AI</div>
+    <div class="typing-dots">
+      <span></span><span></span><span></span>
+    </div>
+    <span class="typing-text">Thinking...</span>
+  </div>
+
+  <!-- Input Bar -->
+  <footer class="input-bar">
+    <div class="input-wrapper">
+      <textarea
+        id="userInput"
+        class="input-field"
+        placeholder="Type your answer or ask a question…"
+        rows="1"
+        aria-label="Chat input"
+      ></textarea>
+      <div class="input-actions">
+        <span class="char-count" id="charCount">0</span>
+        <button class="send-btn" id="sendBtn" aria-label="Send message" title="Send (Ctrl+Enter)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <p class="input-hint">Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send • Model runs fully offline</p>
+  </footer>
+</main>
+
+<!-- ═══ Overlay for mobile ══════════════════════════════════════════════════ -->
+<div class="sidebar-overlay hidden" id="sidebarOverlay"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
