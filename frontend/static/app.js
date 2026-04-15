@@ -38,6 +38,8 @@ const ui = {
   sidebar:           $('sidebar'),
   hamburger:         $('hamburger'),
   sidebarOverlay:    $('sidebarOverlay'),
+  resumeUpload:      $('resumeUpload'),
+  attachBtn:         $('attachBtn'),
 };
 
 // ─── Category Meta ────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ const CATEGORY_META = {
   system_design:{ title: 'System Design',          subtitle: 'Architecture & scalability' },
   dsa:          { title: 'Data Structures & Algo', subtitle: 'Problem solving & complexity' },
   hr:           { title: 'HR / Culture Fit',       subtitle: 'Salary, motivation & fit' },
+  resume_analysis: { title: 'Resume Analysis',     subtitle: 'Upload PDF/DOCX for ATS evaluation' },
 };
 
 // ─── Marked.js Configuration ──────────────────────────────────────────────────
@@ -188,8 +191,14 @@ function switchCategory(category) {
   // Clear messages, restore welcome
   clearMessages();
 
-  // Load new questions
-  loadQuestions(category);
+  // Load new questions (or hide for resume)
+  if (category === 'resume_analysis') {
+    ui.questionList.innerHTML = '<p style="color:var(--text-muted);font-size:0.8rem">Attach your resume to begin.</p>';
+    ui.attachBtn.style.display = 'flex';
+  } else {
+    loadQuestions(category);
+    ui.attachBtn.style.display = 'none';
+  }
 }
 
 // ─── Clear Messages ───────────────────────────────────────────────────────────
@@ -201,19 +210,34 @@ function clearMessages() {
   const welcome = document.createElement('div');
   welcome.id = 'welcomeCard';
   welcome.className = 'welcome-card';
-  welcome.innerHTML = `
-    <div class="welcome-icon">🤖</div>
-    <h2 class="welcome-title">Ready to Ace Your Interview?</h2>
-    <p class="welcome-text">
-      Choose an interview category from the sidebar, then start a conversation.
-      Your AI coach will ask questions, evaluate your answers, and help you improve — all offline.
-    </p>
-    <div class="welcome-chips">
-      <button class="chip" onclick="startConversation('Tell me about yourself.')">Tell me about yourself</button>
-      <button class="chip" onclick="startConversation('Give me a technical interview question.')">Technical question</button>
-      <button class="chip" onclick="startConversation('Start a mock interview.')">Mock interview</button>
-    </div>
-  `;
+  
+  if (state.category === 'resume_analysis') {
+    welcome.innerHTML = `
+      <div class="welcome-icon">📄</div>
+      <h2 class="welcome-title">ATS Resume Analysis</h2>
+      <p class="welcome-text">
+        Upload your resume in PDF or DOCX format. Your AI coach will extract the text locally 
+        and provide an ATS-friendliness score, formatting feedback, and actionable recommendations.
+      </p>
+      <div class="welcome-chips">
+        <button class="chip" onclick="ui.resumeUpload.click()">Click to Upload Resume</button>
+      </div>
+    `;
+  } else {
+    welcome.innerHTML = `
+      <div class="welcome-icon">🤖</div>
+      <h2 class="welcome-title">Ready to Ace Your Interview?</h2>
+      <p class="welcome-text">
+        Choose an interview category from the sidebar, then start a conversation.
+        Your AI coach will ask questions, evaluate your answers, and help you improve — all offline.
+      </p>
+      <div class="welcome-chips">
+        <button class="chip" onclick="startConversation('Tell me about yourself.')">Tell me about yourself</button>
+        <button class="chip" onclick="startConversation('Give me a technical interview question.')">Technical question</button>
+        <button class="chip" onclick="startConversation('Start a mock interview.')">Mock interview</button>
+      </div>
+    `;
+  }
   ui.messagesContainer.appendChild(welcome);
 }
 
@@ -373,6 +397,110 @@ async function streamResponse() {
   }
 }
 
+// ─── Upload Resume ────────────────────────────────────────────────────────────
+async function uploadResume(file) {
+  if (state.isStreaming) return;
+  state.isStreaming = true;
+  ui.sendBtn.disabled = true;
+  ui.userInput.disabled = true;
+  ui.attachBtn.disabled = true;
+
+  // Add a user message to show what was uploaded
+  const userMsg = `Attached Resume: **${file.name}**`;
+  state.messages.push({ role: 'user', content: userMsg });
+  renderMessage('user', userMsg);
+
+  ui.typingIndicator.classList.remove('hidden');
+  ui.typingIndicator.querySelector('.typing-text').textContent = 'Reading resume & analyzing...';
+  scrollToBottom();
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('model', state.model);
+
+  try {
+    const response = await fetch('/api/upload-resume', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Unknown server error' }));
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+
+    ui.typingIndicator.classList.add('hidden');
+    ui.typingIndicator.querySelector('.typing-text').textContent = 'Thinking...';
+
+    let bubble = null;
+    let fullContent = '';
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        try {
+          const chunk = JSON.parse(jsonStr);
+          if (chunk.error) throw new Error(chunk.error);
+
+          const token = chunk.token || '';
+          fullContent += token;
+
+          if (!bubble) bubble = renderMessage('assistant', '', true);
+
+          bubble.innerHTML = safeMarkdown(fullContent);
+          scrollToBottom();
+
+          if (chunk.done) break;
+        } catch (parseErr) {
+          if (parseErr.message && parseErr.message !== 'Unexpected end of JSON input') throw parseErr;
+        }
+      }
+    }
+
+    if (bubble) {
+      const meta = bubble.closest('.message-content').querySelector('.message-meta');
+      if (meta && !meta.querySelector('.copy-message-btn')) {
+        const btn = document.createElement('button');
+        btn.className = 'copy-message-btn';
+        btn.textContent = '⎘ Copy';
+        btn.onclick = () => copyMessageText(btn);
+        meta.appendChild(btn);
+      }
+    }
+
+    if (fullContent) {
+      state.messages.push({ role: 'assistant', content: fullContent });
+      if (bubble) {
+        try { bubble.innerHTML = marked.parse(fullContent); } catch(e) {}
+      }
+    }
+  } catch (err) {
+    ui.typingIndicator.classList.add('hidden');
+    ui.typingIndicator.querySelector('.typing-text').textContent = 'Thinking...';
+    showToast(`Error: ${err.message}`, 'error');
+  } finally {
+    state.isStreaming = false;
+    ui.sendBtn.disabled = false;
+    ui.userInput.disabled = false;
+    ui.attachBtn.disabled = false;
+    ui.userInput.focus();
+    ui.resumeUpload.value = '';
+  }
+}
+
 // ─── Scroll to Bottom ─────────────────────────────────────────────────────────
 function scrollToBottom() {
   ui.messagesContainer.scrollTo({
@@ -452,6 +580,23 @@ ui.userInput.addEventListener('keydown', e => {
 });
 
 ui.userInput.addEventListener('input', autoResizeTextarea);
+
+ui.attachBtn.addEventListener('click', () => {
+  ui.resumeUpload.click();
+});
+
+ui.resumeUpload.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) {
+    ui.attachBtn.classList.remove('has-file');
+    return;
+  }
+  
+  // Directly upload when file is selected for ease of use
+  if (state.category === 'resume_analysis') {
+    uploadResume(file);
+  }
+});
 
 document.querySelectorAll('.category-btn').forEach(btn => {
   btn.addEventListener('click', () => {

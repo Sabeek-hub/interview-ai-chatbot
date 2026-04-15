@@ -5,7 +5,11 @@ Backend: Flask + Ollama (Llama model)
 
 import json
 import os
+import io
 import requests
+import fitz  # PyMuPDF
+import docx
+from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 
@@ -74,6 +78,18 @@ SYSTEM_PROMPTS = {
         "in Python or the candidate's preferred language. "
         "Always analyze time and space complexity."
     ),
+    "resume_analysis": (
+        "You are an expert tech recruiter and Applicant Tracking System (ATS) evaluator. "
+        "The user will provide the text directly extracted from their resume. "
+        "Your task is to analyze this resume and provide structured, actionable feedback. "
+        "First, give the resume an ATS-friendliness score out of 100. "
+        "Then, break your feedback down into these categories: "
+        "1. Format & Readability (Identify formatting issues that might break ATS parsers) "
+        "2. Impact & Metrics (Are they using enough numbers and action verbs?) "
+        "3. Missing Keywords (Suggest technical/soft skills that seem missing for a typical SWE role) "
+        "4. Top 3 Immediate Recommendations. "
+        "Be extremely objective and professional. Do not rewrite the resume for them, just evaluate it."
+    )
 }
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -197,7 +213,84 @@ def sample_questions():
     return jsonify({"questions": questions})
 
 
+@app.route("/api/upload-resume", methods=["POST"])
+def upload_resume():
+    """Extract text from uploaded resume, prepend to prompt, and stream analysis."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+    
+    model = request.form.get("model", DEFAULT_MODEL)
+    
+    try:
+        extracted_text = extract_text_from_file(file)
+        if not extracted_text.strip():
+            return jsonify({"error": "Could not extract text from document."}), 400
+    except Exception as e:
+        return jsonify({"error": f"Error parsing file: {str(e)}"}), 500
+
+    # Build prompt structure
+    messages = [{"role": "user", "content": f"Here is my resume text for ATS evaluation:\n\n{extracted_text}"}]
+    full_messages = _build_messages(messages, "resume_analysis")
+
+    def generate():
+        try:
+            with requests.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json={"model": model, "messages": full_messages, "stream": True},
+                stream=True,
+                timeout=STREAM_TIMEOUT,
+            ) as r:
+                r.raise_for_status()
+                for line in r.iter_lines():
+                    if line:
+                        try:
+                            chunk = json.loads(line)
+                            token = chunk.get("message", {}).get("content", "")
+                            done  = chunk.get("done", False)
+                            payload = json.dumps({"token": token, "done": done})
+                            yield f"data: {payload}\n\n"
+                            if done:
+                                break
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            err = json.dumps({"error": str(e)})
+            yield f"data: {err}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def extract_text_from_file(file) -> str:
+    """Extract and return text from a PDF or DOCX file."""
+    filename = secure_filename(file.filename).lower()
+    file_bytes = file.read()
+    
+    if filename.endswith(".pdf"):
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        return text
+    
+    elif filename.endswith(".docx") or filename.endswith(".doc"):
+        doc = docx.Document(io.BytesIO(file_bytes))
+        return "\n".join([para.text for para in doc.paragraphs])
+    
+    else:
+        raise ValueError("Unsupported file format. Please upload PDF or DOCX.")
 
 def _build_messages(user_messages: list, category: str) -> list:
     """Prepend the system prompt to the conversation."""
